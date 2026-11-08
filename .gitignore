@@ -1,0 +1,17 @@
+# segredo
+.env
+
+# estado local
+eventos_discord_estado.json
+*.tmp
+
+# logs
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
