@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Testes offline (sem rede) do monitor de eventos."""
+"""Testes que rodam sem rede: nada aqui chama a API nem um webhook de verdade."""
 from __future__ import annotations
 
 import json

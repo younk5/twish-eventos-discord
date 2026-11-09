@@ -1,49 +1,54 @@
 # twish-eventos-discord
 
-Avisa no Discord quando começa, muda ou termina um evento no [Twish](https://twish.com.br) — o jogo de pesca da Twitch.
+Avisa no Discord quando começa, muda ou termina um evento no [Twish](https://twish.com.br), o jogo de pesca da Twitch.
 
-O script consulta endpoints **públicos** do Twish, traduz o evento e publica uma mensagem pronta no seu webhook:
+A ideia é pequena: o Twish publica os eventos ativos em endpoints abertos, os mesmos que o site consome. O script lê esses endpoints de tempos em tempos, monta uma mensagem legível e joga no seu webhook. Não tem SDK, não tem token, não tem nada para instalar além do Python.
+
+A mensagem sai assim:
 
 ```
-🎣 NOVO EVENTO NO TWISH!
+🎣 **NOVO EVENTO NO TWISH!**
 
-Evento: 🏪 Desconto na Loja
-Status: 🟢 Ativo
-Relevância: Alta — Desconto real de 15% informado pela API.
-Benefício: Desconto de 15% nos itens da loja.
-Duração: ~45 min (termina ~21:30)
-💡 Recomendação: Vale comprar equipamento agora, conferindo o preço com desconto.
+**Evento:** 🏪 Desconto na Loja
+**Status:** 🟢 Ativo
+**Relevância:** Alta — Desconto real de 15% informado pela API.
+**Benefício:** Desconto de 15% nos itens da loja.
+**Duração:** ~45 min (termina ~21:30)
+💡 **Recomendação:** Vale comprar equipamento agora. Confira o preço final antes de fechar.
 
 🔗 https://twish.com.br/c/seucanal/1234567/inventory
 ```
 
-## O que ele faz e o que ele não faz
+## O que ele faz
 
-- ✅ Lê `/api/{canal}/events/active` e `/api/{canal}/shop`.
-- ✅ Avisa início, alteração e fim de evento, sem repetir depois de reiniciar.
-- ✅ Mostra duração, relevância, recomendação e avisa quando a API manda dados incompletos.
-- ❌ Não faz login, não lê chat, não joga, não automatiza nada.
-- ❌ Não usa banco de dados, não precisa de token, não guarda o webhook em disco (só no `.env`).
+- Lê `/api/{canal}/events/active` (evento da hora e grande evento) e `/api/{canal}/shop` (desconto da loja).
+- Posta quando o evento começa, quando o conteúdo muda e quando termina. Reiniciar o script no meio de um evento não repete nada.
+- Mostra a duração, o quanto aquilo importa e o que dá para fazer. Se a API não mandou o número que justificaria a recomendação, ele avisa que faltou dado em vez de chutar.
+
+## O que ele não faz
+
+Não faz login, não lê o chat, não pesca por você. Não usa banco de dados e não precisa de token, só da URL do webhook no `.env`. O estado de uma coleta para a outra fica num JSON ao lado do script.
 
 Projeto não oficial, sem vínculo com o Twish.
 
 ## Requisitos
 
-- Python 3.9 ou mais novo (só biblioteca padrão, nada para instalar).
-- Um webhook do Discord: **Configurações do servidor → Integrações → Webhooks → Novo webhook**.
+Python 3.9 ou mais novo. Só biblioteca padrão, então não tem `pip install` nenhum para rodar.
+
+Um webhook do Discord: Configurações do servidor → Integrações → Webhooks → Novo webhook.
 
 ## Uso rápido
 
 ```bash
 cp .env.example .env          # Windows: copy .env.example .env
-# edite o .env com o webhook e o canal
+# preencha o webhook e o canal
 
 python twish_eventos_discord.py --testar     # confere se o webhook recebe
-python twish_eventos_discord.py --uma-vez    # uma coleta, imprime o resumo
-python twish_eventos_discord.py --loop       # fica rodando (padrão)
+python twish_eventos_discord.py --uma-vez    # uma coleta só, imprime o resumo
+python twish_eventos_discord.py --loop       # fica rodando (é o padrão)
 ```
 
-Sem `.env`, dá para passar tudo por argumento:
+Se preferir não usar `.env`, tudo cabe em argumento:
 
 ```bash
 python twish_eventos_discord.py \
@@ -54,47 +59,49 @@ python twish_eventos_discord.py \
 
 | Comando | O que faz |
 |---|---|
-| `--loop` | Monitora continuamente (padrão quando nenhum modo é passado). |
+| `--loop` | Monitora sem parar. É o padrão quando nenhum modo é passado. |
 | `--uma-vez` | Faz uma coleta e envia o que houver; imprime um JSON com o resumo. |
-| `--testar` | Envia uma mensagem de teste ao webhook. |
+| `--testar` | Manda uma mensagem de teste ao webhook. |
 | `--status` | Mostra o último estado salvo, sem chamar a API. |
-| `--dump` | Imprime o JSON bruto dos dois endpoints (útil para acompanhar mudança de schema). |
+| `--dump` | Imprime o JSON bruto dos dois endpoints, útil quando o schema muda. |
 
 ## Configuração
 
-Variáveis de ambiente (ou `.env`):
+Variáveis de ambiente, que podem vir do `.env`:
 
 | Variável | Obrigatória | Descrição |
 |---|---|---|
 | `DISCORD_WEBHOOK_URL` | sim, para enviar | URL do webhook do Discord. |
-| `TWISH_CANAL` | sim | Nome do canal do Twish (sem `#`). |
-| `TWISH_JOGADOR` | não | ID do jogador, usado só no link final da mensagem. |
+| `TWISH_CANAL` | sim | Nome do canal do Twish, sem `#`. |
+| `TWISH_JOGADOR` | não | ID do jogador, usado só no link do fim da mensagem. |
 | `TWISH_API_BASE` | não | Base da API (padrão `https://twish.com.br/api`). |
 | `INTERVALO` | não | Segundos entre coletas (padrão 60). |
 
-Flags equivalentes: `--canal`, `--webhook`, `--jogador`, `--base`, `--intervalo`, `--estado`, `--sem-link`, `--env`, `-v`.
+As flags equivalentes são `--canal`, `--webhook`, `--jogador`, `--base`, `--intervalo`, `--estado`, `--sem-link`, `--env` e `-v`.
 
-O webhook é validado pelo prefixo `https://discord.com/api/webhooks/` e **nunca** é escrito no estado ou no log: erros passam por um filtro que troca a URL por `webhook:`.
+O webhook é conferido pelo prefixo `https://discord.com/api/webhooks/` e nunca é escrito no estado nem no log: antes de qualquer erro sair no console, a URL já virou `webhook:`.
 
 ## Como funciona
 
-1. **Coleta** a cada 60 s: evento da hora + grande evento em `/events/active`, e o desconto da loja em `/shop` (se a loja falhar, segue só com os eventos).
-2. **Normaliza** tudo em uma lista de eventos com `key`, nome, emoji, benefício, segundos restantes e um `fingerprint` do conteúdo.
-3. **Compara** com o estado anterior e gera três tipos de ação: `inicio`, `alteracao` e `fim`.
-4. **Formata** a mensagem com relevância, recomendação e aviso de dados incompletos.
-5. **Envia** ao Discord com até 3 tentativas, respeitando `Retry-After` em caso de 429. Se um aviso de fim falhar, fica em `fim_pendente` e é reenviado na coleta seguinte.
+Cada coleta, de 60 em 60 segundos por padrão, faz mais ou menos isto:
 
-### Deduplicação
+1. Pede `/events/active` e `/shop`. Se a loja cair, segue só com os eventos.
+2. Normaliza a resposta numa lista de eventos, cada um com `key`, nome, emoji, benefício, segundos restantes e um `fingerprint` do conteúdo.
+3. Compara com o estado anterior e separa o que virou `inicio`, `alteracao` ou `fim`.
+4. Monta a mensagem com relevância, recomendação e, quando for o caso, o aviso de dados incompletos.
+5. Envia ao Discord com até três tentativas, respeitando o `Retry-After` em 429. Se um aviso de fim falhar, ele fica em `fim_pendente` e é reenviado na coleta seguinte.
 
-O `fingerprint` muda só quando o evento muda de verdade — o contador `seconds_remaining` é ignorado, então a contagem regressiva não gera spam. O estado fica em `eventos_discord_estado.json`:
+### Por que ele não spamma o canal
+
+O `fingerprint` muda apenas quando o evento muda de verdade, e a contagem de segundos fica de fora dele. Sem isso, cada coleta viraria uma alteração e o canal receberia uma mensagem por minuto dizendo que faltam 43 minutos. O estado fica em `eventos_discord_estado.json`:
 
 - reiniciar o script não repete aviso;
 - o mesmo evento voltando depois de `ends_at + 60 s` conta como novo;
-- eventos que nunca chegaram a ser avisados não geram mensagem de "terminou".
+- evento que nunca chegou a ser avisado não gera mensagem de "terminou".
 
 ### Relevância
 
-A classificação é local, derivada do `kind` que a API devolve — não é um dado oficial:
+A classificação é local, montada a partir do `kind` que a API devolve. Não é dado oficial do jogo.
 
 | Nível | Exemplos |
 |---|---|
@@ -103,17 +110,23 @@ A classificação é local, derivada do `kind` que a API devolve — não é um 
 | **Baixa** | Coins em dobro, Sorte Rara que não é Secreto. |
 | **Desconhecida** | `kind` novo ou dado que a API não mandou. |
 
-Se faltar informação (multiplicador, taxa, raridade, espécies), a mensagem não inventa: mostra `⚠️ Dados incompletos` com o que faltou.
+Quando falta informação (multiplicador, taxa, raridade, espécies), a mensagem não inventa: mostra `⚠️ Dados incompletos` e diz o que ficou faltando.
 
 ### Tipos de evento reconhecidos
 
 `double_xp`, `store_discount`, `sell_multiplier`, `tier_catch_boost`, `double_twishcoins`, `cooldown_multiplier`, `cooldown_reset`, `catch_contest`, `catch_pot`, `species_boost`, `catch_drop`, `species_buyer`, `fishing_frozen`, `bite_factor`, `wash_away`.
 
-Um tipo novo não quebra nada: vira "Desconhecida" com o nome que a API mandou. Para adicionar suporte, inclua a entrada em `KINDS` e o caso em `_avaliar_evento`.
+Tipo novo não quebra nada: ele entra como "Desconhecida", com o nome que a API mandou. Para dar suporte, inclua a entrada em `KINDS` e o caso em `_avaliar_evento`.
+
+## Se algo der errado
+
+- O `--testar` diz que falhou: quase sempre é webhook copiado pela metade. A URL inteira começa em `https://discord.com/api/webhooks/`.
+- O `--status` volta vazio: ainda não houve coleta nenhuma. Rode `--uma-vez` primeiro.
+- Evento aparecendo como "Desconhecida": ou o Twish criou um `kind` novo, ou mudou o schema. Rode `--dump` e veja o que está vindo.
 
 ## Rodando como serviço
 
-Linux (systemd):
+Linux, com systemd:
 
 ```ini
 [Unit]
@@ -129,7 +142,7 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-Windows: agendador de tarefas com `python twish_eventos_discord.py --loop`, ou um `.bat` na pasta de inicialização.
+No Windows dá para usar o agendador de tarefas com `python twish_eventos_discord.py --loop`, ou um `.bat` na pasta de inicialização.
 
 ## Desenvolvimento
 
@@ -137,10 +150,10 @@ Windows: agendador de tarefas com `python twish_eventos_discord.py --loop`, ou u
 python -m unittest discover -s tests -t . -v
 ```
 
-Os testes são offline: usam `fetcher` e `enviar` injetados, sem rede e sem webhook real.
+Os testes rodam offline: `fetcher` e `enviar` são injetados, então não tem rede nem webhook de verdade no meio.
 
-Se a API mudar de schema, rode `--dump` e compare com os campos usados em `extrair_ativos`/`_avaliar_evento`.
+Se a API mudar de schema, rode `--dump` e compare com os campos usados em `extrair_ativos` e `_avaliar_evento`.
 
 ## Licença
 
-MIT — veja [LICENSE](LICENSE).
+MIT, veja [LICENSE](LICENSE).

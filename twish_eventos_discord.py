@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Avisos de eventos do Twish no Discord.
+"""Avisa no Discord quando um evento do Twish começa, muda ou termina.
 
-O script consulta dois endpoints públicos do Twish e publica um aviso num
-webhook do Discord sempre que um evento começa, muda ou termina.
+O script lê dois endpoints públicos do Twish, os mesmos que o site consome:
 
     /api/{canal}/events/active  -> evento da hora + grande evento
     /api/{canal}/shop           -> desconto da loja
 
-Somente leitura: não faz login, não joga, não automatiza nada. O estado fica em
-``eventos_discord_estado.json`` para não repetir aviso depois de reiniciar. O
-webhook nunca é gravado no estado, no log ou na saída.
+Só leitura. Nada de login, nada de pescar sozinho: ele olha, traduz e repassa o
+aviso. O estado fica em ``eventos_discord_estado.json``, então reiniciar o script
+não repete mensagem. O webhook nunca é gravado no estado, no log ou na saída.
 """
 from __future__ import annotations
 
@@ -38,8 +37,9 @@ ESTADO_PADRAO = Path("eventos_discord_estado.json")
 
 log = logging.getLogger("twish_eventos")
 
-# Rótulos e recomendações derivados do schema real dos eventos. Nada aqui
-# inventa evento: só traduz o kind/nome que a API devolveu.
+# O que cada kind significa na prática, escrito a partir do schema real. Se
+# algum campo não veio, o texto não completa por conta própria: quem avisa isso
+# é a linha de dados incompletos.
 KINDS = {
     "double_xp": ("Bônus de XP", "Toda pescaria com peixe rende o dobro de pontos e XP.",
                   "Priorize pescar agora; é a melhor janela para evoluir de nível."),
@@ -80,7 +80,8 @@ RELEVANCIA = {
     "desconhecida": ("Desconhecida", 0),
 }
 
-# Só traduz ids de raridade que a API já usa; não cria raridade nova.
+# Traduz apenas os ids de raridade que a API já mandou. Raridade nova entra
+# aqui no dia em que aparecer.
 TIER_NOMES = {
     "common": "Comum", "comum": "Comum",
     "uncommon": "Incomum", "incomum": "Incomum",
@@ -139,7 +140,7 @@ def _numero(valor: Any) -> float | None:
 
 
 def _pct(valor: Any) -> int | None:
-    """Converte taxa real (0,2 ou 20) em porcentagem, sem inventar valor."""
+    """Taxa chega como 0,2 num endpoint e 20 no outro. Devolve 20 nos dois casos."""
     n = _numero(valor)
     if n is None or n <= 0:
         return None
@@ -157,7 +158,7 @@ def _sem_acento(texto: Any) -> str:
 # ---------------------------------------------------------------------------
 
 def _tiers_nomes(evento: dict) -> list[str]:
-    """Nomes das raridades que a API mandou em ``tiers``/``target_tier_label``."""
+    """Junta os nomes de raridade de ``tiers`` e ``target_tier_label``, sem repetir."""
     nomes: list[str] = []
     for item in evento.get("tiers") or []:
         if isinstance(item, dict):
@@ -220,7 +221,11 @@ def _resultado_evento(relevancia: str, motivo: str, recomendacao: str = "",
 
 
 def _avaliar_evento(evento: dict, taxa_loja: float | None = None) -> dict:
-    """Classifica o evento e recomenda só o que os dados reais sustentam."""
+    """Diz o quão relevante é o evento e o que dá para recomendar com os dados.
+
+    Quando falta número para justificar a sugestão, a sugestão vira cautela e o
+    campo ``faltando`` conta o que a API não mandou.
+    """
     kind = str(evento.get("kind") or "")
     valor = _numero(evento.get("value"))
     tiers = _tiers_nomes(evento)
@@ -233,8 +238,8 @@ def _avaliar_evento(evento: dict, taxa_loja: float | None = None) -> dict:
             return _resultado_evento(
                 "alta",
                 "A API informou multiplicador de venda de %sx." % mult,
-                "Vale vender o estoque acumulado agora; a venda paga o "
-                "multiplicador real de %sx." % mult)
+                "Vale vender o estoque acumulado agora: cada peixe paga %sx o "
+                "preço normal." % mult)
         return _resultado_evento(
             "alta",
             "Evento de venda turbinada ativo, sem multiplicador informado pela API.",
@@ -250,7 +255,7 @@ def _avaliar_evento(evento: dict, taxa_loja: float | None = None) -> dict:
             return _resultado_evento(
                 "alta",
                 "Desconto real de %d%% informado pela API." % pct,
-                "Vale comprar equipamento agora, conferindo o preço com desconto.")
+                "Vale comprar equipamento agora. Confira o preço final antes de fechar.")
         return _resultado_evento(
             "media",
             "Evento de desconto ativo, mas a API não informou a taxa.",
@@ -436,7 +441,11 @@ def _texto_evento(evento: dict, com_desconto: float | None = None) -> tuple[str,
 
 
 def _fingerprint(dado: dict) -> str:
-    """Muda só quando o evento muda de verdade; ignora o contador de segundos."""
+    """Muda só quando o evento muda de verdade.
+
+    ``seconds_remaining`` fica de fora de propósito. Se entrasse, cada coleta
+    viraria uma alteração e o canal só veria contagem regressiva.
+    """
     estavel = {
         "kind": dado.get("kind"),
         "name": dado.get("name"),
@@ -457,7 +466,7 @@ def _fingerprint(dado: dict) -> str:
 
 def extrair_ativos(payload: dict | None, loja: dict | None,
                    agora: float | None = None) -> list[dict]:
-    """Normaliza a resposta real em uma lista de eventos monitoráveis."""
+    """Transforma o JSON cru dos dois endpoints na lista que o resto do script usa."""
     agora = agora or time.time()
     payload = payload if isinstance(payload, dict) else {}
     loja = loja if isinstance(loja, dict) else {}
@@ -495,8 +504,8 @@ def extrair_ativos(payload: dict | None, loja: dict | None,
             "raw": dado,
         })
 
-    # Desconto da loja também é um evento real, mas a API de eventos pode vir
-    # sem ele. Se já veio store_discount, não duplica.
+    # Desconto da loja é evento de verdade, só que às vezes aparece apenas em
+    # /shop e não em /events/active. Se já veio como store_discount, não repete.
     if not tem_desconto_evento and taxa_loja is not None:
         try:
             seg = float(loja.get("discount_seconds_remaining"))
@@ -523,10 +532,10 @@ def extrair_ativos(payload: dict | None, loja: dict | None,
 
 
 def comparar(anteriores: dict, atuais: list[dict], agora: float | None = None) -> list[dict]:
-    """Compara o estado anterior com a foto atual e devolve as ações.
+    """Compara o estado salvo com a foto de agora e devolve o que avisar.
 
-    Ações: ``inicio``, ``alteracao`` e ``fim``. O que já foi notificado não é
-    notificado de novo.
+    As ações são ``inicio``, ``alteracao`` e ``fim``. O que já saiu no Discord não
+    sai de novo, e quem controla isso é o campo ``notificado``.
     """
     agora = agora or time.time()
     atuais_por_key = {e["key"]: e for e in atuais}
@@ -540,7 +549,7 @@ def comparar(anteriores: dict, atuais: list[dict], agora: float | None = None) -
             tipo = "inicio" if not prev.get("notificado") else "alteracao"
             acoes.append({"tipo": tipo, "evento": e})
             continue
-        # Reinício do mesmo evento depois do fim previsto.
+        # Mesmo evento voltando depois do fim que estava previsto na coleta anterior.
         fim_prev = prev.get("ends_at")
         if fim_prev and agora > float(fim_prev) + 60 and e.get("ends_at") and \
                 float(e["ends_at"]) > float(fim_prev) + 60:
@@ -609,7 +618,7 @@ def link_inventario(canal: str, jogador: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _redigir(texto: str) -> str:
-    """Nunca deixa um webhook aparecer em log."""
+    """Troca a URL do webhook por um rótulo antes de qualquer coisa ir para o log."""
     return (texto.replace("https://discord.com/api/webhooks/", "webhook:")
                  .replace("https://discordapp.com/api/webhooks/", "webhook:"))
 
@@ -636,7 +645,11 @@ def _get_json(caminho: str, base: str = API_BASE,
 
 
 def postar(texto: str, url: str | None = None, tentativas: int = 3) -> bool:
-    """Envia ao Discord; tenta de novo em erro de rede/429/5xx."""
+    """Envia ao Discord e insiste em erro de rede, 429 e 5xx.
+
+    Em 429 respeita o ``Retry-After``. Devolve False quando desistiu; quem chamou
+    decide se guarda o aviso para a próxima coleta.
+    """
     url = (url or os.environ.get("DISCORD_WEBHOOK_URL", "")).strip()
     if not url:
         return False
@@ -717,7 +730,11 @@ def observar_uma_vez(
     fetcher: Fetcher = _get_json,
     enviar: Enviador = postar,
 ) -> dict:
-    """Uma coleta + envio. Devolve um resumo para a CLI."""
+    """Faz uma coleta, envia o que tiver e devolve o resumo em dicionário.
+
+    É o mesmo resumo que o ``--uma-vez`` imprime e que o laço usa para escolher
+    entre log de informação e log de aviso.
+    """
     agora = time.time()
     resumo: dict = {"em": agora, "eventos": [], "enviados": 0, "erro": ""}
     canal_q = urllib.parse.quote(str(canal or "").strip())
@@ -743,12 +760,13 @@ def observar_uma_vez(
     pendentes = estado.get("fim_pendente") or {}
     atuais_keys = {e["key"] for e in atuais}
 
-    # Se o evento voltou, não há mais fim pendente.
+    # Evento que voltou não tem mais fim pendente para reenviar.
     for key in list(pendentes):
         if key in atuais_keys:
             pendentes.pop(key, None)
 
-    # Tenta primeiro os términos que ficaram pendentes de uma coleta anterior.
+    # Primeiro os términos que ficaram pendentes. Aviso atrasado ainda serve;
+    # aviso perdido, não.
     for key, prev in list(pendentes.items()):
         if enviar(mensagem({"tipo": "fim", "evento": prev}), url=webhook_url):
             resumo["enviados"] += 1
@@ -757,7 +775,8 @@ def observar_uma_vez(
             resumo["erro"] = "falha ao enviar ao Discord; vou tentar de novo"
 
     acoes = comparar(anteriores, atuais, agora)
-    # Alertas relevantes primeiro; encerramentos por último.
+    # Ordem de envio: o que é relevante primeiro, término por último. No celular
+    # a pessoa vê o que importa antes da notícia de que já acabou.
     acoes.sort(key=lambda a: (a.get("tipo") == "fim",
                               -int((a.get("evento") or {}).get("prioridade") or 0)))
     link = link_inventario(canal, jogador)
@@ -789,7 +808,8 @@ def observar_uma_vez(
             if acao["tipo"] == "fim":
                 pendentes[e.get("key")] = e
 
-    # Estado ativo: guarda o fingerprint atual e o último que foi avisado.
+    # A foto atual e o que já foi avisado ficam separados. É essa diferença que
+    # evita aviso repetido sem perder aviso.
     novos = {}
     for e in atuais:
         prev = anteriores.get(e["key"]) or {}
@@ -868,7 +888,7 @@ def _webhook_configurado(webhook_url: str | None = None) -> str:
 
 
 def carregar_env(caminho: Path | None = None) -> dict[str, str]:
-    """Lê um .env simples (chave=valor) sem sobrescrever o ambiente."""
+    """Lê um .env de chave=valor sem pisar no que já está no ambiente."""
     caminho = Path(caminho or ".env")
     dados: dict[str, str] = {}
     if not caminho.exists():
@@ -906,7 +926,7 @@ def _status_texto(estado_path: Path) -> str:
 
 
 def _saida_utf8() -> None:
-    """Evita UnicodeEncodeError ao imprimir emojis no console do Windows."""
+    """Força UTF-8 na saída, senão o console do Windows engasga com os emojis."""
     for fluxo in (sys.stdout, sys.stderr):
         try:
             fluxo.reconfigure(encoding="utf-8", errors="replace")
@@ -929,7 +949,8 @@ def _loop(canal: str, jogador: str, webhook_url: str, estado_path: Path,
         except KeyboardInterrupt:
             log.info("monitor encerrado")
             return 0
-        except Exception as e:  # noqa: BLE001 — o laço não pode morrer
+        except Exception as e:  # noqa: BLE001: erro bobo não pode derrubar um
+            # monitor que fica dias rodando
             log.exception("erro no laço: %s", str(e)[:160])
         try:
             time.sleep(max(15, int(intervalo)))
