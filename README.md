@@ -157,3 +157,5 @@ Se a API mudar de schema, rode `--dump` e compare com os campos usados em `extra
 ## Licença
 
 MIT, veja [LICENSE](LICENSE).
+
+
